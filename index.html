@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Flip Pad Planner</title>
+<meta name="description" content="A flip-notepad to-do list, one page per day.">
+<meta name="theme-color" content="#dfe4e1">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Flip Pad">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="fonts.css">
+<style>
+/* Layout: one top-bound steno pad filling the phone screen; each day is a sheet that flips up over the spiral. */
+*, *::before, *::after { box-sizing: border-box; }
+:root {
+  --desk: #dfe4e1;
+  --paper: #eef4e6;
+  --paper-edge: #d5dfcc;
+  --rule: #a9c3d6;
+  --margin: #d98c8c;
+  --ink: #23344a;
+  --ink-soft: #5d6f80;
+  --accent: #2f6fb0;
+  --done: #3f8a5a;
+  --ring: #8a9399;
+  --shadow: rgba(30, 45, 40, .18);
+  --font-hand: "Kalam", "Comic Sans MS", "Segoe Print", cursive;
+  --font-ui: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  --line: 44px;
+  color-scheme: light; /* always light, whatever the phone's theme */
+}
+[hidden] { display: none !important; }
+
+html, body { min-height: 100%; }
+body {
+  margin: 0;
+  background: var(--desk); color: var(--ink); font-family: var(--font-ui); font-size: 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: calc(16px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+.app { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 14px; }
+
+/* Top bar: date controls */
+.bar { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  flex: none; width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid var(--rule);
+  background: var(--paper); color: var(--ink); font-size: 20px; line-height: 1; cursor: pointer;
+  display: grid; place-items: center;
+}
+.icon-btn:active { transform: scale(.94); }
+.date-pick { flex: 1; min-width: 0; position: relative; }
+.date-pick label {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; height: 44px;
+  border-radius: 22px; background: var(--paper); border: 1.5px solid var(--rule); cursor: pointer;
+  font-family: var(--font-mono); font-size: 13px; letter-spacing: .06em; text-transform: uppercase;
+}
+.date-pick label small { font-size: 10px; color: var(--ink-soft); letter-spacing: .1em; }
+.date-pick input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+.today-btn {
+  flex: none; height: 44px; padding: 0 14px; border-radius: 22px; border: none; cursor: pointer;
+  background: var(--accent); color: var(--paper); font: 700 14px var(--font-ui);
+}
+
+/* The pad */
+.pad { position: relative; perspective: 1400px; touch-action: pan-y; }
+button, .dcol, .bcol, label { touch-action: manipulation; }
+.sheets > .page:not(.flipper) { transition: transform .28s cubic-bezier(.2,.9,.3,1.2); }
+.sheets.dragging > .page:not(.flipper) { transition: none; }
+.spiral {
+  position: relative; z-index: 5; height: 26px; margin: 0 14px -13px;
+  display: flex; justify-content: space-between; padding: 0 6px;
+}
+.spiral span {
+  width: 10px; height: 26px; border-radius: 6px; border: 3px solid var(--ring);
+  border-bottom-color: transparent; background: transparent;
+}
+.sheets { position: relative; }
+.under {
+  position: absolute; inset: 6px -3px -6px; background: var(--paper-edge); border-radius: 6px 6px 10px 10px;
+  box-shadow: 0 10px 24px var(--shadow);
+}
+.page {
+  position: relative; background: var(--paper); border-radius: 6px 6px 10px 10px;
+  padding: 26px 18px 18px 52px; min-height: 66vh;
+  background-image:
+    linear-gradient(to right, transparent 40px, var(--margin) 40px, var(--margin) 41.5px, transparent 41.5px),
+    repeating-linear-gradient(to bottom, transparent 0, transparent calc(var(--line) - 1px), var(--rule) calc(var(--line) - 1px), var(--rule) var(--line));
+  background-position: 0 0, 0 130px;
+  background-color: var(--paper);
+  box-shadow: 0 1px 0 var(--paper-edge);
+}
+.page::before { /* perforation holes under the spiral */
+  content: ""; position: absolute; top: 6px; left: 20px; right: 20px; height: 8px;
+  background: radial-gradient(circle at 5px 4px, var(--desk) 3.5px, transparent 4px) 0 0 / calc((100% - 10px) / 15) 8px repeat-x;
+}
+.flipper {
+  position: absolute; inset: 0; z-index: 4; pointer-events: none; transform-origin: top center;
+  backface-visibility: hidden; -webkit-backface-visibility: hidden; min-height: 0;
+}
+
+.head { height: 78px; display: flex; flex-direction: column; justify-content: flex-end; }
+.day-name { font: 700 38px/1 var(--font-hand); margin: 0; text-wrap: balance; }
+.day-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); letter-spacing: .08em; text-transform: uppercase; height: 26px; white-space: nowrap; }
+.day-meta span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tally { color: var(--done); }
+
+.tasks { list-style: none; margin: 0; padding: 0; }
+.task { position: relative; min-height: var(--line); display: flex; align-items: flex-start; gap: 10px; }
+.check {
+  position: absolute; left: -44px; top: 10px; width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid var(--ink-soft); background: transparent; cursor: pointer; padding: 0;
+  display: grid; place-items: center; color: var(--paper);
+}
+.check::before { content: ""; position: absolute; inset: -9px; }
+.task.done .check { background: var(--done); border-color: var(--done); }
+.check svg { width: 14px; height: 14px; opacity: 0; }
+.task.done .check svg { opacity: 1; }
+.text {
+  flex: 1; min-width: 0; font: 400 21px/var(--line) var(--font-hand); color: var(--ink); cursor: pointer;
+  position: relative; top: 7px; background: none; border: 0; text-align: left; padding: 0; overflow-wrap: anywhere;
+}
+.tx {
+  background: linear-gradient(var(--ink-soft), var(--ink-soft)) 0 58% / 0% 2.5px no-repeat;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone; transition: background-size .35s ease-out;
+}
+.task.done .text { color: var(--ink-soft); }
+.task.done .tx { background-size: 100% 2.5px; }
+.del {
+  flex: none; width: 44px; height: 44px; margin: 0 -10px 0 0; border: 0; background: none; color: var(--ink-soft);
+  font-size: 22px; line-height: 1; cursor: pointer; opacity: .55; border-radius: 50%;
+}
+.del:hover, .del:focus-visible { opacity: 1; }
+
+.add { height: var(--line); display: flex; align-items: flex-end; gap: 8px; padding-bottom: 4px; position: relative; }
+.add::before { content: "+"; position: absolute; left: -38px; bottom: 6px; font: 700 26px/1 var(--font-hand); color: var(--accent); }
+.add input {
+  flex: 1; min-width: 0; border: 0; background: transparent; color: var(--ink); outline: none;
+  font: 400 21px/1.2 var(--font-hand); padding: 0;
+}
+.add input::placeholder { color: var(--ink-soft); opacity: .7; }
+.add button { border: 0; background: var(--accent); color: var(--paper); border-radius: 19px; height: 38px; padding: 0 16px; font: 700 14px var(--font-ui); cursor: pointer; }
+.add button[disabled] { opacity: .35; cursor: default; }
+.empty { font: 400 18px/var(--line) var(--font-hand); color: var(--ink-soft); margin: 0; height: var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Week tally */
+.week { background: var(--paper); border: 1.5px solid var(--rule); border-radius: 12px; padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 10px; }
+.week-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.week-head h2 { margin: 0; font: 700 13px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+.week-head b { font: 700 22px var(--font-hand); color: var(--done); }
+.days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.dcol { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 4px 0; border-radius: 8px; cursor: pointer; color: var(--ink); font-family: var(--font-ui); }
+.dcol.sel { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.track { width: 14px; height: 56px; border-radius: 7px; background: color-mix(in srgb, var(--rule) 45%, transparent); display: flex; align-items: flex-end; overflow: hidden; }
+.fill { width: 100%; background: var(--done); border-radius: 7px; transition: height .3s; }
+.dnum { font: 500 12px var(--font-mono); font-variant-numeric: tabular-nums; }
+.dlbl { font-size: 11px; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .08em; }
+.dcol.today .dlbl { color: var(--accent); font-weight: 700; }
+
+.status { text-align: center; font-size: 12px; color: var(--ink-soft); min-height: 1em; }
+
+/* Progress stats */
+.stats { background: var(--paper); border: 1.5px solid var(--rule); border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.stats-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+.stats-head h2 { margin: 0; font: 700 13px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-soft); }
+.range { display: flex; border: 1.5px solid var(--rule); border-radius: 16px; overflow: hidden; }
+.range button { border: 0; background: none; color: var(--ink-soft); font: 700 12px var(--font-mono); padding: 6px 12px; cursor: pointer; min-height: 40px; }
+.range button[aria-pressed="true"] { background: var(--accent); color: var(--paper); }
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.tile { border-top: 1.5px dashed var(--rule); padding-top: 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tile b { font: 700 30px/1 var(--font-hand); color: var(--ink); font-variant-numeric: tabular-nums; }
+.tile b.good { color: var(--done); }
+.tile span { font-size: 12px; color: var(--ink-soft); }
+.chart { display: flex; flex-direction: column; gap: 6px; }
+.chart-cap { display: flex; justify-content: space-between; font: 500 11px var(--font-mono); color: var(--ink-soft); letter-spacing: .05em; }
+.bars { position: relative; height: 120px; display: grid; gap: 2px; align-items: end; border-bottom: 1.5px solid var(--rule);
+  background: repeating-linear-gradient(to top, transparent 0, transparent 39px, color-mix(in srgb, var(--rule) 40%, transparent) 39px, color-mix(in srgb, var(--rule) 40%, transparent) 40px); }
+.bcol { position: relative; height: 100%; display: flex; align-items: flex-end; border: 0; padding: 0; background: none; cursor: pointer; border-radius: 3px 3px 0 0; min-width: 0; }
+.bcol .tot { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 3px 3px 0 0; background: color-mix(in srgb, var(--rule) 55%, transparent); }
+.bcol .dn { position: relative; width: 100%; border-radius: 3px 3px 0 0; background: var(--done); }
+.bcol.sel .tot { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bcol.is-today .dn { background: var(--accent); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft); flex-wrap: wrap; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.stats-empty { margin: 0; font: 400 17px var(--font-hand); color: var(--ink-soft); }
+.toast {
+  position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+  z-index: 20; display: flex; align-items: center; gap: 12px; max-width: calc(100% - 32px);
+  background: var(--ink); color: var(--paper); border-radius: 24px; padding: 6px 6px 6px 18px;
+  box-shadow: 0 8px 24px var(--shadow); font-size: 15px;
+}
+.toast span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.toast button { flex: none; height: 38px; padding: 0 16px; border: 0; border-radius: 19px; background: var(--paper); color: var(--ink); font: 700 14px var(--font-ui); cursor: pointer; }
+@media (max-width: 360px) {
+  .bar { gap: 6px; }
+  .today-btn { padding: 0 10px; }
+  .date-pick label small { display: none; }
+  .day-name { font-size: 32px; }
+  .page { padding-right: 12px; }
+  .tile b { font-size: 26px; }
+  .range button { padding: 6px 9px; }
+}
+:focus-visible { outline: 2.5px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .tx, .fill { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="bar">
+    <button class="icon-btn" id="prev" aria-label="Previous day">&#8249;</button>
+    <div class="date-pick">
+      <label for="datein"><span id="dateLabel">—</span><small>tap to pick a date</small></label>
+      <input type="date" id="datein" aria-label="Pick a date">
+    </div>
+    <button class="icon-btn" id="next" aria-label="Next day">&#8250;</button>
+    <button class="today-btn" id="todayBtn" hidden>Today</button>
+  </div>
+
+  <div class="pad" id="pad">
+    <div class="spiral" aria-hidden="true" id="spiral"></div>
+    <div class="sheets" id="sheets">
+      <div class="under"></div>
+      <section class="page" id="page" aria-live="polite"></section>
+    </div>
+  </div>
+
+  <section class="week" aria-label="Tasks done this week">
+    <div class="week-head"><h2 id="weekTitle">This week</h2><b id="weekTotal">0 done</b></div>
+    <div class="days" id="days"></div>
+  </section>
+  <section class="stats" aria-label="Progress">
+    <div class="stats-head"><h2>Progress</h2>
+      <div class="range" role="group" aria-label="Time range">
+        <button data-range="7">7D</button><button data-range="30">30D</button><button data-range="90">90D</button>
+      </div></div>
+    <div class="tiles">
+      <div class="tile"><b id="sDone">0</b><span id="sDoneLbl">tasks done</span></div>
+      <div class="tile"><b id="sRate">–</b><span>completion rate</span></div>
+      <div class="tile"><b id="sStreak" class="good">0</b><span id="sStreakLbl">day streak</span></div>
+      <div class="tile"><b id="sBest">0</b><span>best streak</span></div>
+    </div>
+    <div class="chart">
+      <div class="bars" id="bars" aria-label="Tasks done per day"></div>
+      <div class="chart-cap"><span id="capStart"></span><span id="capMax"></span><span id="capEnd"></span></div>
+      <div class="legend"><span><i style="background:var(--done)"></i>Done</span><span><i style="background:color-mix(in srgb, var(--rule) 55%, transparent)"></i>Planned</span><span><i style="background:var(--accent)"></i>Today</span></div>
+    </div>
+    <p class="stats-empty" id="statsEmpty" hidden>Strike off a task and your progress shows up here.</p>
+  </section>
+  <p class="status" id="status"></p>
+  <div class="toast" id="toast" role="status" hidden><span id="toastMsg"></span><button id="undoBtn">Undo</button></div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  const CACHE = "flippad-days-v1";
+  const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const keyOf = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+  const dateOf = (k) => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+  const shift = (k, n) => { const d = dateOf(k); d.setDate(d.getDate() + n); return keyOf(d); };
+  const todayKey = () => keyOf(new Date());
+  const esc = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+  let days = {};            // { "2026-10-24": { tasks: [{id, text, done}] } }
+  let current = todayKey();
+  let draft = "";
+
+  // ---- persistence: everything lives in this phone's storage ----
+  try { days = JSON.parse(localStorage.getItem(CACHE) || "{}") || {}; } catch (e) { days = {}; }
+  function persist() {
+    try { localStorage.setItem(CACHE, JSON.stringify(days)); setStatus(""); }
+    catch (e) { setStatus("Couldn't save on this phone. Your phone's storage may be full."); }
+  }
+  // ask the browser not to clear the tasks when space runs low
+  try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+
+  const tasksFor = (k) => (days[k] && days[k].tasks) || [];
+  const counts = (k) => { const t = tasksFor(k); return { total: t.length, done: t.filter((x) => x.done).length }; };
+
+  function setStatus(msg) { $("status").textContent = msg; }
+
+  // ---- rendering ----
+  const spiral = $("spiral");
+  for (let i = 0; i < 16; i++) spiral.appendChild(document.createElement("span"));
+
+  const CHECK = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5l3.2 3L13 4.5"/></svg>';
+
+  function pageHTML(k, live) {
+    const d = dateOf(k), t = tasksFor(k), c = counts(k);
+    const isToday = k === todayKey();
+    const rel = isToday ? "Today" : k === shift(todayKey(), 1) ? "Tomorrow" : k === shift(todayKey(), -1) ? "Yesterday" : "";
+    const items = t.map((x) => `
+      <li class="task${x.done ? " done" : ""}" data-id="${x.id}">
+        <button class="check" data-act="toggle" aria-label="${x.done ? "Mark not done" : "Mark done"}: ${esc(x.text)}" aria-pressed="${x.done}">${CHECK}</button>
+        <button class="text" data-act="toggle" tabindex="-1"><span class="tx">${esc(x.text)}</span></button>
+        <button class="del" data-act="del" aria-label="Delete: ${esc(x.text)}">&times;</button>
+      </li>`).join("");
+    return `
+      <div class="head"><h1 class="day-name">${DAYS[d.getDay()]}</h1></div>
+      <div class="day-meta"><span>${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}${rel ? " · " + rel : ""}</span>
+        <span class="tally">${c.total ? `${c.done} of ${c.total} done` : ""}</span></div>
+      <ul class="tasks">${items}</ul>
+      ${t.length ? "" : '<p class="empty">Blank page. Add your first task below.</p>'}
+      <form class="add" autocomplete="off">
+        <input id="newtask" ${live ? "" : 'tabindex="-1" disabled'} maxlength="140" placeholder="Add a task…" aria-label="New task" enterkeyhint="enter" value="${live ? esc(draft) : ""}">
+        <button type="submit" ${draft.trim() && live ? "" : "disabled"}>Add</button>
+      </form>`;
+  }
+
+  function renderPage() { $("page").innerHTML = pageHTML(current, true); }
+
+  function renderBar() {
+    const d = dateOf(current);
+    $("dateLabel").textContent = `${DAYS[d.getDay()].slice(0, 3)} · ${d.getDate()} ${MONTHS[d.getMonth()]}`;
+    $("datein").value = current;
+    $("todayBtn").hidden = current === todayKey();
+  }
+
+  function renderWeek() {
+    const d = dateOf(current);
+    const monOffset = (d.getDay() + 6) % 7;
+    const start = shift(current, -monOffset);
+    const keys = Array.from({ length: 7 }, (_, i) => shift(start, i));
+    const max = Math.max(1, ...keys.map((k) => counts(k).total));
+    let sum = 0;
+    $("days").innerHTML = keys.map((k) => {
+      const c = counts(k); sum += c.done;
+      const dd = dateOf(k);
+      const h = c.total ? Math.max(6, Math.round((c.done / max) * 100)) : 0;
+      return `<button class="dcol${k === current ? " sel" : ""}${k === todayKey() ? " today" : ""}" data-key="${k}" aria-label="${DAYS[dd.getDay()]} ${dd.getDate()}: ${c.done} of ${c.total} done">
+        <span class="dnum">${c.total ? `${c.done}/${c.total}` : "–"}</span>
+        <span class="track"><span class="fill" style="height:${h}%"></span></span>
+        <span class="dlbl">${DAYS[dd.getDay()].slice(0, 2)}</span></button>`;
+    }).join("");
+    const s = dateOf(start);
+    $("weekTitle").textContent = `Week of ${s.getDate()} ${MONTHS[s.getMonth()]}`;
+    $("weekTotal").textContent = `${sum} done`;
+    renderStats();
+  }
+
+
+  // ---- progress stats ----
+  let range = 30;
+  try { range = Number(localStorage.getItem("flippad-range")) || 30; } catch (e) {}
+  const hasDone = (k) => counts(k).done > 0;
+  function streaks() {
+    const t = todayKey();
+    let cur = 0, k = hasDone(t) ? t : shift(t, -1);
+    while (hasDone(k)) { cur++; k = shift(k, -1); }
+    const doneKeys = Object.keys(days).filter(hasDone).sort();
+    let best = 0, run = 0, prev = null;
+    doneKeys.forEach((d) => { run = prev && shift(prev, 1) === d ? run + 1 : 1; best = Math.max(best, run); prev = d; });
+    return { cur, best, alive: hasDone(t) };
+  }
+  function renderStats() {
+    document.querySelectorAll(".range button").forEach((b) => b.setAttribute("aria-pressed", String(Number(b.dataset.range) === range)));
+    const end = todayKey();
+    const keys = Array.from({ length: range }, (_, i) => shift(end, i - range + 1));
+    let done = 0, total = 0;
+    keys.forEach((k) => { const c = counts(k); done += c.done; total += c.total; });
+    const st = streaks();
+    $("sDone").textContent = done;
+    $("sDoneLbl").textContent = `tasks done in ${range} days`;
+    $("sRate").textContent = total ? Math.round((done / total) * 100) + "%" : "–";
+    $("sStreak").textContent = st.cur;
+    $("sStreakLbl").textContent = st.cur === 1 ? "day streak" : "days streak";
+    if (st.cur && !st.alive) $("sStreakLbl").textContent += " · finish one today";
+    $("sBest").textContent = st.best;
+    const max = Math.max(1, ...keys.map((k) => counts(k).total));
+    const bars = $("bars");
+    bars.style.gridTemplateColumns = `repeat(${range}, 1fr)`;
+    bars.style.gap = range > 30 ? "1px" : "2px";
+    bars.innerHTML = keys.map((k) => {
+      const c = counts(k), d = dateOf(k);
+      return `<button class="bcol${k === current ? " sel" : ""}${k === end ? " is-today" : ""}" data-key="${k}" title="${d.getDate()} ${MONTHS[d.getMonth()]}: ${c.done} of ${c.total} done" aria-label="${DAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]}: ${c.done} of ${c.total} done">
+        <span class="tot" style="height:${(c.total / max) * 100}%"></span><span class="dn" style="height:${(c.done / max) * 100}%"></span></button>`;
+    }).join("");
+    const s0 = dateOf(keys[0]);
+    $("capStart").textContent = `${s0.getDate()} ${MONTHS[s0.getMonth()]}`;
+    $("capMax").textContent = `max ${max}/day`;
+    $("capEnd").textContent = "Today";
+    $("statsEmpty").hidden = Object.keys(days).some(hasDone);
+  }
+  document.querySelector(".range").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-range]"); if (!b) return;
+    range = Number(b.dataset.range);
+    try { localStorage.setItem("flippad-range", String(range)); } catch (err) {}
+    renderStats();
+  });
+  $("bars").addEventListener("click", (e) => { const b = e.target.closest(".bcol"); if (b) { goTo(b.dataset.key); window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" }); } });
+
+  function renderAll() { renderBar(); renderPage(); renderWeek(); }
+
+  // ---- page flip ----
+  let flipping = false;
+  function goTo(k) {
+    if (!k || k === current || flipping) return;
+    const forward = k > current;
+    const oldKey = current;
+    draft = "";
+    current = k;
+    renderBar(); renderWeek();
+    if (reduceMotion || !Element.prototype.animate) { renderPage(); return; }
+    flipping = true;
+    const sheets = $("sheets");
+    const flip = document.createElement("section");
+    flip.className = "page flipper";
+    flip.setAttribute("aria-hidden", "true");
+    const ease = "cubic-bezier(.4,.1,.25,1)";
+    const under = $("page");
+    under.animate([{ filter: "brightness(.86)" }, { filter: "brightness(1)" }], { duration: 480, easing: "ease-out", direction: forward ? "normal" : "reverse" });
+    if (forward) {
+      flip.innerHTML = pageHTML(oldKey, false);
+      renderPage();
+      sheets.appendChild(flip);
+      flip.animate([{ transform: "rotateX(0deg)", filter: "brightness(1)" }, { transform: "rotateX(178deg)", filter: "brightness(.8)" }], { duration: 480, easing: ease, fill: "forwards" })
+        .finished.then(done, done);
+    } else {
+      flip.innerHTML = pageHTML(k, false);
+      sheets.appendChild(flip);
+      flip.animate([{ transform: "rotateX(178deg)", filter: "brightness(.8)" }, { transform: "rotateX(0deg)", filter: "brightness(1)" }], { duration: 480, easing: ease, fill: "forwards" })
+        .finished.then(() => { renderPage(); done(); }, () => { renderPage(); done(); });
+    }
+    function done() { flip.remove(); flipping = false; }
+  }
+
+  // ---- events ----
+  $("prev").onclick = () => goTo(shift(current, -1));
+  $("next").onclick = () => goTo(shift(current, 1));
+  $("todayBtn").onclick = () => goTo(todayKey());
+  $("datein").addEventListener("change", (e) => { if (e.target.value) goTo(e.target.value); });
+  $("days").addEventListener("click", (e) => { const b = e.target.closest(".dcol"); if (b) goTo(b.dataset.key); });
+
+  const page = $("page");
+  page.addEventListener("input", (e) => {
+    if (e.target.id !== "newtask") return;
+    draft = e.target.value;
+    page.querySelector(".add button").disabled = !draft.trim();
+  });
+  page.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = draft.trim();
+    if (!text) return;
+    if (!days[current]) days[current] = { tasks: [] };
+    days[current].tasks = [...tasksFor(current), { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text, done: false }];
+    draft = "";
+    renderPage(); renderWeek();
+    $("newtask").focus();
+    persist();
+  });
+  page.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-act]");
+    if (!btn) return;
+    const id = btn.closest(".task").dataset.id;
+    const list = tasksFor(current);
+    if (btn.dataset.act === "toggle") {
+      try { navigator.vibrate && navigator.vibrate(10); } catch (err) {}
+      days[current].tasks = list.map((t) => (t.id === id ? { ...t, done: !t.done } : t));
+      const li = btn.closest(".task");
+      const nowDone = !li.classList.contains("done");
+      li.classList.toggle("done", nowDone);
+      li.querySelector(".check").setAttribute("aria-pressed", String(nowDone));
+      const c = counts(current);
+      page.querySelector(".tally").textContent = c.total ? `${c.done} of ${c.total} done` : "";
+    } else {
+      const index = list.findIndex((t) => t.id === id);
+      lastDeleted = { key: current, task: list[index], index };
+      days[current].tasks = list.filter((t) => t.id !== id);
+      if (!days[current].tasks.length) delete days[current];
+      renderPage();
+      showToast(`Deleted “${lastDeleted.task.text}”`);
+    }
+    renderWeek();
+    persist();
+  });
+
+  // ---- undo for deletes ----
+  let lastDeleted = null, toastTimer = 0;
+  function showToast(msg) {
+    $("toastMsg").textContent = msg;
+    $("toast").hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { $("toast").hidden = true; lastDeleted = null; }, 5000);
+  }
+  $("undoBtn").onclick = () => {
+    $("toast").hidden = true; clearTimeout(toastTimer);
+    if (!lastDeleted) return;
+    const { key, task, index } = lastDeleted; lastDeleted = null;
+    const list = [...tasksFor(key)];
+    list.splice(Math.min(index, list.length), 0, task);
+    days[key] = { tasks: list };
+    if (key === current) renderPage();
+    renderWeek(); persist();
+  };
+
+  // swipe up/left = next day, down/right = previous (ignore when typing)
+  let sx = 0, sy = 0, st = 0, dragging = false, locked = null;
+  const sheets = $("sheets");
+  const livePage = () => $("page");
+  $("pad").addEventListener("touchstart", (e) => {
+    if (flipping || e.touches.length > 1 || e.target.closest("input")) { locked = "skip"; return; }
+    const t = e.touches[0]; sx = t.clientX; sy = t.clientY; st = Date.now(); locked = null; dragging = false;
+  }, { passive: true });
+  $("pad").addEventListener("touchmove", (e) => {
+    if (locked === "skip" || locked === "y") return;
+    const t = e.touches[0], dx = t.clientX - sx, dy = t.clientY - sy;
+    if (!locked) { if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; locked = Math.abs(dx) > Math.abs(dy) ? "x" : "y"; if (locked === "y") return; }
+    dragging = true; sheets.classList.add("dragging");
+    const pull = Math.max(-1, Math.min(1, dx / 160));
+    livePage().style.transform = `translateX(${dx * 0.35}px) rotate(${pull * 1.6}deg)`;
+  }, { passive: true });
+  $("pad").addEventListener("touchend", (e) => {
+    if (!dragging) return;
+    dragging = false; sheets.classList.remove("dragging");
+    livePage().style.transform = "";
+    const dx = e.changedTouches[0].clientX - sx, fast = Date.now() - st < 300;
+    if (Math.abs(dx) > 70 || (fast && Math.abs(dx) > 35)) goTo(shift(current, dx < 0 ? 1 : -1));
+  }, { passive: true });
+  $("pad").addEventListener("touchcancel", () => { dragging = false; sheets.classList.remove("dragging"); livePage().style.transform = ""; }, { passive: true });
+
+  // roll over to the new day if the app is left open past midnight
+  let lastToday = todayKey();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible") return;
+    const t = todayKey();
+    if (t !== lastToday) { if (current === lastToday) current = t; lastToday = t; renderAll(); }
+  });
+
+  renderAll();
+
+  // ---- offline: cache the app on the phone ----
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+  }
+})();
+</script>
+</body>
+</html>
